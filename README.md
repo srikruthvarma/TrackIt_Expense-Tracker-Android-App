@@ -32,3 +32,7 @@ A simple and beautiful Android app built with modern tools to help users track t
 ## 📲 Future Updates
 - Option to export monthly data(expenses) into a PDF
 - More animations or UI changes
+
+## About Project 
+- This whole project is made by me
+- Thank you soo much!!🤧
