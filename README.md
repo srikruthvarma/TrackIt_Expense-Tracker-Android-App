@@ -2,14 +2,6 @@
 
 A simple and beautiful Android app built with modern tools to help users track their daily expenses. This project focuses on a clean UI, a reactive architecture, and a great user experience.
 
-## 📱 screenshorts
-![Splash Screen](Screenshots/Splash_Screen.png)
-![Home Screen of TrackIt App](Screenshots/Home_page.png)
-![All Expenses Screen of TrackIt App](Screenshots/All_Expenses.png)
-![Add Expense Dialog](Screenshots/Add_Expenses.png)
-![Search Results](Screenshots/Search.png)]
-
-
 ## ✨ Features
 - **Expense Tracking**: Add, delete, and view expenses.
 - **Budget Management**: Set and update a monthly budget.
