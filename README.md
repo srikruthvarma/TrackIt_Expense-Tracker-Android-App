@@ -28,3 +28,7 @@ A simple and beautiful Android app built with modern tools to help users track t
 - **Navigation**: Navigation-Compose
 - **Data Persistence**: SharedPreferences with Gson
 - **Asynchronous Programming**: Kotlin Coroutines
+
+## 📲 Future Updates
+- Option to export monthly data(expenses) into a PDF
+- More animations or UI changes
