@@ -11,12 +11,13 @@ A simple and beautiful Android app built with modern tools to help users track t
     - Tab-based navigation for Home and All Expenses.
     - A custom progress bar to visualize the budget.
     - UI's colour will change based on the theme applied on phone
+    - Gives warning when you exceed your budget over 80% and highlights in red colour
 - **Search and Filter**:
     - Search for expenses by keyword.
     - Search results are automatically grouped by month.
     - View all expenses and filter them by month.
 - **Custom Design**:
-    - Custom font and a permanent dark theme.
+    - Custom font and dark theme.
     - Custom icons and animated UI elements.
 
 ## 🛠️ Technologies Used
