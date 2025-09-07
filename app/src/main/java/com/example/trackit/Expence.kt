@@ -1,5 +1,3 @@
-// Expense.kt
-
 package com.example.trackit
 
 data class Expense(

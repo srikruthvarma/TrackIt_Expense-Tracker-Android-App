@@ -2,6 +2,7 @@ package com.example.trackit
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
@@ -13,11 +14,14 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
@@ -29,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -47,8 +52,6 @@ import com.example.trackit.ui.theme.TrackItTheme
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
-import androidx.compose.ui.res.painterResource
-
 sealed class BottomNavItem(
     val route: String,
     val label: String,
@@ -59,7 +62,6 @@ sealed class BottomNavItem(
         label = "Home",
         icon = { Icon(Icons.Default.Home, contentDescription = "Home") }
     )
-
     object AllExpenses : BottomNavItem(
         route = "all_expenses",
         label = "All Expenses",
@@ -157,21 +159,27 @@ fun AppNavigation(navController: NavHostController, viewModel: ExpenseViewModel)
         }
         composable(BottomNavItem.Home.route) {
             val budget by viewModel.budget.collectAsState()
-            val total by viewModel.totalExpenses.collectAsState()
+            val budgetPeriod by viewModel.budgetPeriod.collectAsState()
+            val total by viewModel.totalExpensesForPeriod.collectAsState()
             val balance by viewModel.balance.collectAsState()
             val recentExpenses by viewModel.recentExpenses.collectAsState()
             val searchText by viewModel.searchText.collectAsState()
             val searchedExpensesByMonth by viewModel.searchedExpensesByMonth.collectAsState()
+            val showBudgetWarning by viewModel.showBudgetWarningPopup.collectAsState()
 
             HomeScreen(
                 budget = budget,
+                budgetPeriod = budgetPeriod,
                 total = total,
                 balance = balance,
                 recentExpenses = recentExpenses,
                 searchText = searchText,
                 searchedExpensesByMonth = searchedExpensesByMonth,
+                showBudgetWarning = showBudgetWarning,
+                onDismissBudgetWarning = viewModel::dismissBudgetWarning,
                 onSearchTextChange = viewModel::onSearchTextChange,
                 onSetBudget = viewModel::setBudget,
+                onDeleteBudget = viewModel::deleteBudget,
                 onDeleteExpense = viewModel::deleteExpense
             )
         }
@@ -217,21 +225,33 @@ fun SplashScreenContent() {
 @Composable
 fun HomeScreen(
     budget: Double,
+    budgetPeriod: BudgetPeriod,
     total: Double,
     balance: Double,
     recentExpenses: List<Expense>,
     searchText: String,
     searchedExpensesByMonth: Map<String, List<Expense>>,
+    showBudgetWarning: Boolean,
+    onDismissBudgetWarning: () -> Unit,
     onSearchTextChange: (String) -> Unit,
-    onSetBudget: (Double) -> Unit,
+    onSetBudget: (Double, BudgetPeriod) -> Unit,
+    onDeleteBudget: () -> Unit,
     onDeleteExpense: (Expense) -> Unit
 ) {
+    BackHandler(enabled = searchText.isNotBlank()) {
+        onSearchTextChange("")
+    }
+
     val myCustomFont = FontFamily(
         Font(R.font.epundaslab_variablefont_wght, FontWeight.Normal)
     )
 
     var expenseToDelete by remember { mutableStateOf<Expense?>(null) }
     var showUpdateBudgetDialog by remember { mutableStateOf(false) }
+
+    if (showBudgetWarning) {
+        BudgetWarningDialog(onDismiss = onDismissBudgetWarning)
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text(
@@ -245,61 +265,71 @@ fun HomeScreen(
         )
         Spacer(modifier = Modifier.height(16.dp))
 
-        OutlinedTextField(
-            value = searchText,
-            onValueChange = onSearchTextChange,
-            label = { Text("Search") },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp)
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-
-        AnimatedVisibility(visible = searchText.isBlank()) {
-            Column {
-                BudgetSummaryCard(
-                    budget = budget,
-                    total = total,
-                    balance = balance,
-                    onEditClick = { showUpdateBudgetDialog = true }
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "Recent Expenses",
-                    style = TextStyle(
-                        fontFamily = myCustomFont,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                )
+        if (budgetPeriod == BudgetPeriod.NONE) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Button(onClick = { showUpdateBudgetDialog = true }) {
+                    Text("Set Your Budget")
+                }
             }
-        }
+        } else {
+            OutlinedTextField(
+                value = searchText,
+                onValueChange = onSearchTextChange,
+                label = { Text("Search") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(16.dp))
 
-        LazyColumn {
-            if (searchText.isBlank()) {
-                items(recentExpenses, key = { it.id }) { expense ->
-                    ExpenseItem(
-                        expense = expense,
-                        onLongPress = { expenseToDelete = expense }
+            AnimatedVisibility(visible = searchText.isBlank()) {
+                Column {
+                    val isOverBudget = budget > 0 && (total / budget) > 0.8
+                    BudgetSummaryCard(
+                        budget = budget,
+                        budgetPeriod = budgetPeriod,
+                        total = total,
+                        balance = balance,
+                        isWarning = isOverBudget,
+                        onEditClick = { showUpdateBudgetDialog = true }
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Recent Expenses",
+                        style = TextStyle(
+                            fontFamily = myCustomFont,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     )
                 }
-            } else {
-                searchedExpensesByMonth.forEach { (month, expensesInMonth) ->
-                    stickyHeader {
-                        Text(
-                            text = month,
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surface)
-                                .padding(vertical = 8.dp)
-                        )
-                    }
-                    items(expensesInMonth, key = { it.id }) { expense ->
+            }
+
+            LazyColumn {
+                if (searchText.isBlank()) {
+                    items(recentExpenses, key = { it.id }) { expense ->
                         ExpenseItem(
                             expense = expense,
-                            onLongPress = { expenseToDelete = expense }
+                            onDeleteClick = { expenseToDelete = expense }
                         )
+                    }
+                } else {
+                    searchedExpensesByMonth.forEach { (month, expensesInMonth) ->
+                        stickyHeader {
+                            Text(
+                                text = month,
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .padding(vertical = 8.dp)
+                            )
+                        }
+                        items(expensesInMonth, key = { it.id }) { expense ->
+                            ExpenseItem(
+                                expense = expense,
+                                onDeleteClick = { expenseToDelete = expense }
+                            )
+                        }
                     }
                 }
             }
@@ -319,8 +349,13 @@ fun HomeScreen(
     if (showUpdateBudgetDialog) {
         UpdateBudgetDialog(
             currentBudget = budget,
-            onSetBudget = {
-                onSetBudget(it)
+            currentPeriod = budgetPeriod,
+            onSetBudget = { newBudget, newPeriod ->
+                onSetBudget(newBudget, newPeriod)
+                showUpdateBudgetDialog = false
+            },
+            onDeleteBudget = {
+                onDeleteBudget()
                 showUpdateBudgetDialog = false
             },
             onDismiss = { showUpdateBudgetDialog = false }
@@ -329,19 +364,32 @@ fun HomeScreen(
 }
 
 @Composable
-fun BudgetSummaryCard(budget: Double, total: Double, balance: Double, onEditClick: () -> Unit) {
+fun BudgetSummaryCard(budget: Double, budgetPeriod: BudgetPeriod, total: Double, balance: Double, isWarning: Boolean, onEditClick: () -> Unit) {
     val myCustomFont = FontFamily(
         Font(R.font.epundaslab_variablefont_wght, FontWeight.Normal)
     )
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    val budgetTitle = when (budgetPeriod) {
+        BudgetPeriod.WEEKLY -> "This Week's Budget"
+        BudgetPeriod.MONTHLY -> "This Month's Budget"
+        BudgetPeriod.YEARLY -> "This Year's Budget"
+        BudgetPeriod.NONE -> "My Budget"
+    }
+
+    val borderColor = if (isWarning) MaterialTheme.colorScheme.error else Color.Transparent
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(2.dp, borderColor, MaterialTheme.shapes.medium)
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "My Budget",
+                    text = budgetTitle,
                     style = TextStyle(
                         fontFamily = myCustomFont,
                         fontSize = 14.sp,
@@ -376,7 +424,7 @@ fun BudgetSummaryCard(budget: Double, total: Double, balance: Double, onEditClic
 
 @Composable
 fun PercentageProgressBar(progress: Float) {
-    val progressColor = MaterialTheme.colorScheme.primary
+    val progressColor = if (progress > 0.8f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
 
     val luminance = (0.299 * progressColor.red + 0.587 * progressColor.green + 0.114 * progressColor.blue)
     val textColor = if (luminance > 0.5) Color.Black else Color.White
@@ -385,7 +433,7 @@ fun PercentageProgressBar(progress: Float) {
         modifier = Modifier
             .fillMaxWidth()
             .height(24.dp)
-            .clip(RoundedCornerShape(12.dp)),
+            .clip(MaterialTheme.shapes.large),
         contentAlignment = Alignment.Center
     ) {
         LinearProgressIndicator(
@@ -436,12 +484,31 @@ fun AllExpensesScreen(viewModel: ExpenseViewModel) {
                 onMonthSelected = { selectedMonth = it }
             )
             Spacer(modifier = Modifier.height(16.dp))
+
+            val expensesForMonth = expensesByMonth[selectedMonth] ?: emptyList()
+            val totalForMonth = expensesForMonth.sumOf { it.amount }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Total Spent", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "₹${String.format("%.2f", totalForMonth)}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+
             LazyColumn {
-                val expensesForMonth = expensesByMonth[selectedMonth] ?: emptyList()
                 items(expensesForMonth, key = { it.id }) { expense ->
                     ExpenseItem(
                         expense = expense,
-                        onLongPress = { expenseToDelete = expense }
+                        onDeleteClick = { expenseToDelete = expense }
                     )
                 }
             }
@@ -490,7 +557,7 @@ fun MonthSelector(months: List<String>, selectedMonth: String, onMonthSelected: 
 }
 
 @Composable
-fun ExpenseItem(expense: Expense, onLongPress: () -> Unit) {
+fun ExpenseItem(expense: Expense, onDeleteClick: () -> Unit) {
     var isExpanded by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
@@ -500,14 +567,12 @@ fun ExpenseItem(expense: Expense, onLongPress: () -> Unit) {
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { isExpanded = !isExpanded },
-                    onLongPress = { onLongPress() }
+                    onLongPress = { onDeleteClick() }
                 )
             },
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier
-            .padding(16.dp)
-            .fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -517,12 +582,20 @@ fun ExpenseItem(expense: Expense, onLongPress: () -> Unit) {
                 Text(text = "₹${String.format("%.2f", expense.amount)}", color = Color.Gray)
             }
             AnimatedVisibility(visible = isExpanded) {
-                Text(
-                    text = "Added on: ${java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a").format(java.util.Date(expense.id))}",
-                    fontSize = 12.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Added on: ${java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a").format(java.util.Date(expense.id))}",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onDeleteClick, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete Expense", tint = MaterialTheme.colorScheme.error)
+                    }
+                }
             }
         }
     }
@@ -570,32 +643,90 @@ fun DeleteConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text("Delete Expense") },
         text = { Text("Are you sure you want to delete this transaction? This action cannot be undone.") },
-        confirmButton = { Button(onClick = onConfirm) { Text("Delete") } },
+        confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Delete") } },
         dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
-fun UpdateBudgetDialog(currentBudget: Double, onSetBudget: (Double) -> Unit, onDismiss: () -> Unit) {
+fun UpdateBudgetDialog(
+    currentBudget: Double,
+    currentPeriod: BudgetPeriod,
+    onSetBudget: (Double, BudgetPeriod) -> Unit,
+    onDeleteBudget: () -> Unit,
+    onDismiss: () -> Unit
+) {
     var budgetInput by remember { mutableStateOf(if (currentBudget == 0.0) "" else currentBudget.toString()) }
+    val periods = listOf(BudgetPeriod.WEEKLY, BudgetPeriod.MONTHLY, BudgetPeriod.YEARLY)
+    var selectedPeriod by remember { mutableStateOf(if (currentPeriod == BudgetPeriod.NONE) BudgetPeriod.MONTHLY else currentPeriod) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Update Budget") },
         text = {
-            OutlinedTextField(
-                value = budgetInput,
-                onValueChange = { budgetInput = it },
-                label = { Text("Enter New Budget") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
+            Column {
+                OutlinedTextField(
+                    value = budgetInput,
+                    onValueChange = { budgetInput = it },
+                    label = { Text("Enter Budget Amount") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Column(Modifier.selectableGroup()) {
+                    periods.forEach { period ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = (period == selectedPeriod),
+                                    onClick = { selectedPeriod = period },
+                                    role = Role.RadioButton
+                                )
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = (period == selectedPeriod),
+                                onClick = null
+                            )
+                            Text(
+                                text = period.name.lowercase().replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
         },
         confirmButton = {
             Button(onClick = {
                 val budgetValue = budgetInput.toDoubleOrNull() ?: 0.0
-                onSetBudget(budgetValue)
+                onSetBudget(budgetValue, selectedPeriod)
             }) { Text("Update") }
         },
-        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onDeleteBudget, enabled = currentPeriod != BudgetPeriod.NONE) {
+                    Text("Delete Budget", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    )
+}
+
+@Composable
+fun BudgetWarningDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Budget Warning") },
+        text = { Text("You have spent over 80% of your budget for this period.") },
+        confirmButton = { Button(onClick = onDismiss) { Text("OK") } }
     )
 }
 
@@ -605,8 +736,10 @@ fun BudgetCardPreview() {
     TrackItTheme(darkTheme = true) {
         BudgetSummaryCard(
             budget = 20000.0,
-            total = 7500.0,
-            balance = 12500.0,
+            budgetPeriod = BudgetPeriod.MONTHLY,
+            total = 17000.0,
+            balance = 3000.0,
+            isWarning = true,
             onEditClick = {}
         )
     }
@@ -626,6 +759,7 @@ fun HomeScreenPreview() {
     TrackItTheme(darkTheme = true) {
         HomeScreen(
             budget = 50000.0,
+            budgetPeriod = BudgetPeriod.MONTHLY,
             total = 15000.0,
             balance = 35000.0,
             recentExpenses = listOf(
@@ -634,8 +768,11 @@ fun HomeScreenPreview() {
             ),
             searchText = "",
             searchedExpensesByMonth = emptyMap(),
+            showBudgetWarning = false,
+            onDismissBudgetWarning = {},
             onSearchTextChange = {},
-            onSetBudget = {},
+            onSetBudget = { _, _ -> },
+            onDeleteBudget = {},
             onDeleteExpense = {}
         )
     }
